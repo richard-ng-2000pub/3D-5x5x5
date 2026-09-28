@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+  >
+
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="color-scheme" content="light">
+
+  <title>Solution</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+    }
+
+    #viewer {
+      width: 100vw;
+      height: 100vh;
+      width: 100dvw;
+      height: 100dvh;
+
+      display: grid;
+      place-items: center;
+
+      overflow: hidden;
+      background: #fff;
+    }
+
+    #viewer > svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+    }
+
+    #status {
+      font: 14px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #666;
+      text-align: center;
+      padding: 24px;
+    }
+  </style>
+</head>
+
+<body>
+  <main id="viewer" aria-live="polite">
+    <div id="status">Loading solution…</div>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      // Khoảng trắng quanh hình sau khi tự động crop.
+      // 0.02 = 2%.
+      const FIT_PADDING = 0.02;
+
+      const viewer = document.getElementById("viewer");
+      const params = new URLSearchParams(window.location.search);
+      const file = params.get("f");
+
+      function showError(message) {
+        viewer.innerHTML = "";
+        const box = document.createElement("div");
+        box.id = "status";
+        box.textContent = message;
+        viewer.appendChild(box);
+      }
+
+      async function loadSolution() {
+        if (!file) {
+          showError("No solution file was specified.");
+          return;
+        }
+
+        if (!/^[A-Za-z0-9._-]+\.svg$/i.test(file)) {
+          showError("Invalid solution filename.");
+          return;
+        }
+
+        const url = "solutions/" + encodeURIComponent(file);
+
+        try {
+          const response = await fetch(url, {
+            cache: "no-store"
+          });
+
+          if (!response.ok) {
+            throw new Error("HTTP " + response.status);
+          }
+
+          const svgText = await response.text();
+
+          const parsed = new DOMParser().parseFromString(
+            svgText,
+            "image/svg+xml"
+          );
+
+          if (parsed.querySelector("parsererror")) {
+            throw new Error("Invalid SVG");
+          }
+
+          const sourceSvg = parsed.documentElement;
+
+          if (
+            !sourceSvg ||
+            sourceSvg.localName.toLowerCase() !== "svg"
+          ) {
+            throw new Error("File is not an SVG");
+          }
+
+          const svg = document.importNode(sourceSvg, true);
+
+          // Để CSS quyết định kích thước hiển thị.
+          svg.removeAttribute("width");
+          svg.removeAttribute("height");
+
+          svg.setAttribute(
+            "preserveAspectRatio",
+            "xMidYMid meet"
+          );
+
+          svg.setAttribute("role", "img");
+          svg.setAttribute(
+            "aria-label",
+            "Puzzle solution"
+          );
+
+          /*
+            SVG của bạn có rectangle trắng phủ toàn canvas:
+
+            <rect width="100%" height="100%" fill="white"/>
+
+            Nếu giữ rectangle này thì getBBox()
+            sẽ hiểu toàn bộ 612x480 là nội dung.
+
+            Vì vậy ta bỏ riêng background rectangle
+            trước khi tính kích thước hình thực tế.
+          */
+          for (const child of Array.from(svg.children)) {
+
+            if (
+              child.localName.toLowerCase() !== "rect"
+            ) {
+              continue;
+            }
+
+            const width =
+              (child.getAttribute("width") || "").trim();
+
+            const height =
+              (child.getAttribute("height") || "").trim();
+
+            const fill =
+              (child.getAttribute("fill") || "")
+                .trim()
+                .toLowerCase();
+
+            const isFullCanvas =
+              width === "100%" &&
+              height === "100%";
+
+            const isWhite =
+              fill === "white" ||
+              fill === "#fff" ||
+              fill === "#ffffff" ||
+              fill === "rgb(255,255,255)";
+
+            if (isFullCanvas && isWhite) {
+              child.remove();
+            }
+          }
+
+          viewer.replaceChildren(svg);
+
+          /*
+            Phải đợi SVG được đưa vào DOM
+            thì trình duyệt mới tính getBBox()
+            chính xác.
+          */
+          requestAnimationFrame(() => {
+
+            requestAnimationFrame(() => {
+
+              try {
+
+                const NS =
+                  "http://www.w3.org/2000/svg";
+
+                const artwork =
+                  document.createElementNS(NS, "g");
+
+                artwork.setAttribute(
+                  "data-autofit",
+                  "true"
+                );
+
+                /*
+                  Những thành phần hỗ trợ này
+                  không phải hình vẽ trực tiếp.
+                */
+                const keepAtRoot = new Set([
+                  "defs",
+                  "style",
+                  "title",
+                  "desc",
+                  "metadata",
+                  "script"
+                ]);
+
+                const drawableNodes =
+                  Array.from(svg.children).filter(
+                    el =>
+                      !keepAtRoot.has(
+                        el.localName.toLowerCase()
+                      )
+                  );
+
+                for (const node of drawableNodes) {
+                  artwork.appendChild(node);
+                }
+
+                svg.appendChild(artwork);
+
+                /*
+                  Đây chính là kích thước thật
+                  của hình 3D.
+                */
+                const box = artwork.getBBox();
+
+                if (
+                  Number.isFinite(box.x) &&
+                  Number.isFinite(box.y) &&
+                  box.width > 0 &&
+                  box.height > 0
+                ) {
+
+                  const longestSide =
+                    Math.max(
+                      box.width,
+                      box.height
+                    );
+
+                  const pad =
+                    Math.max(
+                      2,
+                      longestSide * FIT_PADDING
+                    );
+
+                  const x =
+                    box.x - pad;
+
+                  const y =
+                    box.y - pad;
+
+                  const w =
+                    box.width + pad * 2;
+
+                  const h =
+                    box.height + pad * 2;
+
+                  /*
+                    QUAN TRỌNG NHẤT:
+
+                    Thay viewBox 612x480 cũ
+                    bằng đúng vùng hình thực tế.
+                  */
+                  svg.setAttribute(
+                    "viewBox",
+                    `${x} ${y} ${w} ${h}`
+                  );
+                }
+
+              } catch (fitError) {
+
+                console.warn(
+                  "SVG auto-fit skipped:",
+                  fitError
+                );
+
+              }
+
+            });
+
+          });
+
+        } catch (error) {
+
+          console.error(error);
+
+          showError(
+            "Unable to load this solution."
+          );
+
+        }
+      }
+
+      loadSolution();
+
+    })();
+  </script>
+</body>
+</html>
